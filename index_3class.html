@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>ご飯残量確認アプリ</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: #f7f7f7;
+      color: #111;
+      text-align: center;
+    }
+    main {
+      max-width: 520px;
+      margin: 0 auto;
+      padding: 24px 16px 40px;
+    }
+    h1 {
+      font-size: 28px;
+      margin-bottom: 8px;
+    }
+    p {
+      line-height: 1.6;
+    }
+    button {
+      width: 100%;
+      max-width: 420px;
+      min-height: 64px;
+      margin: 10px 0;
+      border: 0;
+      border-radius: 14px;
+      font-size: 22px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    #startBtn {
+      background: #111;
+      color: white;
+    }
+    #checkBtn {
+      background: white;
+      color: #111;
+      border: 2px solid #111;
+    }
+    #checkBtn:disabled {
+      opacity: .45;
+      cursor: not-allowed;
+    }
+    #webcam-container {
+      margin: 18px auto;
+    }
+    canvas {
+      width: min(90vw, 420px) !important;
+      height: auto !important;
+      border-radius: 18px;
+    }
+    #result {
+      margin-top: 18px;
+      padding: 20px;
+      border-radius: 16px;
+      background: white;
+      font-size: 30px;
+      font-weight: 800;
+      min-height: 48px;
+    }
+    #detail {
+      margin-top: 10px;
+      font-size: 16px;
+      color: #555;
+      white-space: pre-line;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>ご飯残量確認</h1>
+    <p>カメラを茶碗に向けて、判定ボタンを押してください。</p>
+
+    <button id="startBtn" onclick="init()">カメラを起動</button>
+    <button id="checkBtn" onclick="announceResult()" disabled>判定する</button>
+
+    <div id="webcam-container"></div>
+    <div id="result">まだ判定していません</div>
+    <div id="detail"></div>
+  </main>
+
+  <script>
+    const URL = "https://teachablemachine.withgoogle.com/models/FmuSokThD/";
+
+    let model, webcam;
+    let latestPredictions = [];
+    let running = false;
+
+    async function init() {
+      if (running) return;
+
+      const modelURL = URL + "model.json";
+      const metadataURL = URL + "metadata.json";
+
+      document.getElementById("result").textContent = "モデルを読み込み中…";
+
+      try {
+        model = await tmImage.load(modelURL, metadataURL);
+
+        webcam = new tmImage.Webcam(300, 300, false);
+        await webcam.setup({ facingMode: "environment" });
+        await webcam.play();
+
+        document.getElementById("webcam-container").innerHTML = "";
+        document.getElementById("webcam-container").appendChild(webcam.canvas);
+
+        running = true;
+        document.getElementById("startBtn").textContent = "カメラ起動済み";
+        document.getElementById("startBtn").disabled = true;
+        document.getElementById("checkBtn").disabled = false;
+        document.getElementById("result").textContent = "茶碗をカメラに映してください";
+
+        window.requestAnimationFrame(loop);
+      } catch (e) {
+        console.error(e);
+        document.getElementById("result").textContent =
+          "カメラを起動できませんでした。Safari/Chromeでカメラの許可を確認してください。";
+      }
+    }
+
+    async function loop() {
+      if (!running) return;
+      webcam.update();
+      await predict();
+      window.requestAnimationFrame(loop);
+    }
+
+    async function predict() {
+      const predictions = await model.predict(webcam.canvas);
+      predictions.sort((a, b) => b.probability - a.probability);
+      latestPredictions = predictions;
+
+      const detailText = predictions
+        .map(p => `${p.className}：${Math.round(p.probability * 100)}%`)
+        .join("\n");
+
+      document.getElementById("detail").textContent = detailText;
+    }
+
+    function normalizeLabel(label) {
+      const text = String(label).trim();
+
+      if (text.includes("なし")) return "なし";
+      if (text.includes("少")) return "少し";
+      if (text.includes("中")) return "中くらい";
+
+      return text;
+    }
+
+    function makeMessage(label, probability) {
+      if (probability < 0.70) {
+        return "うまく判定できません。もう少し茶碗に近づけてください。";
+      }
+
+      const normalized = normalizeLabel(label);
+
+      if (normalized === "なし") {
+        return "ご飯は残っていません。";
+      }
+      if (normalized === "少し") {
+        return "ご飯が少し残っています。";
+      }
+      if (normalized === "中くらい") {
+        return "ご飯が中くらい残っています。";
+      }
+
+      return `${normalized} と判定しました。`;
+    }
+
+    function announceResult() {
+      if (!latestPredictions.length) return;
+
+      const top = latestPredictions[0];
+      const message = makeMessage(top.className, top.probability);
+
+      document.getElementById("result").textContent = message;
+
+      speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(message);
+      utterance.lang = "ja-JP";
+      speechSynthesis.speak(utterance);
+    }
+  </script>
+</body>
+</html>
